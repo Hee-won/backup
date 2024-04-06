@@ -9,7 +9,7 @@ import pygraphviz as pgv
 
 
 def get_onewalk_dep(g, pkg_name, pkg_version): 
-    print("get_onewalk_dep")
+    print(f"+++++ get_onewalk_dep for {pkg_name}")
     """
     - Description: 주어진 패키지의 종속 패키지들을 확인 + 정규화
     - Input: 지금까지 만든 graph, 검사하고 싶은 패키지 이름, 버전
@@ -36,6 +36,7 @@ def get_onewalk_dep(g, pkg_name, pkg_version):
 
             #이미 graph에 패키지 이름, 버전이 저장되어있는 건 아닌지 확인 
             if g.has_node(name) in g and g.get_node(n).xlabel in g:
+                print(f"[-] get_onewalk_dep(): Already exists {g.has_node(name)}.")
                 break
             #확인 후 저장  
             dep_dict[name] = version_str
@@ -49,7 +50,7 @@ def make_graph(g, dep_dict, pkg_name):
     """
     - Description: 노드&엣지 추가
     - Input: 그래프 g, 각 종속 패키지의 name: version (json) 형식의 dictionary
-    - Output: 노드와 엣지가 추가된 그래프 
+    - Output: 노드와 엣지가 추가된 그래프 g
     """
     print("make_graph")   
 
@@ -61,20 +62,22 @@ def make_graph(g, dep_dict, pkg_name):
     return g
 
 def process_package(g, pkg_name, pkg_version, working_pkg_list):
-    working_pkg_list.pop(0)
-    print(f"working_pkg_list ============ {working_pkg_list}")
-    print("process_package")
     """
     Description: 주어진 패키지(package_name)의 종속되어있는 패키지 정보를
     그래프 g에 노드, 간선 형태로 업데이트
     """
+    working_pkg_list.pop(0) 
+    print(f"working_pkg_list ============ {working_pkg_list}")
+    print("process_package")
+
 
     temp_dep_dict = get_onewalk_dep(g, pkg_name, pkg_version)
     if temp_dep_dict != {}:
 
         g = make_graph(g, temp_dep_dict, package_name)
+        for key in temp_dep_dict.keys():
+            working_pkg_list.append(key)
         for name, version in temp_dep_dict.items():
-            working_pkg_list.append(name)
             process_package(g, name, version, working_pkg_list)
     else:
         sys.exit()
@@ -85,8 +88,8 @@ def create_graph(): #그래프 만들기
 
 if __name__ == "__main__":
     # STEP 1. Select a target package
-    package_name = "express" # 우리는 우선적으로 한 패키지의 최신 버전만 간주.
-    package_version = "4.19.2"
+    package_name = "vue" # 우리는 우선적으로 한 패키지의 최신 버전만 간주.
+    package_version = "3.4.21"
     working_pkg_list = [] #같은 depth인 수행해야하는 패키지들 저장용도 
     working_pkg_list.append(package_name)
     # STEP 2. Initialize graph for the target
