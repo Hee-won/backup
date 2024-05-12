@@ -1,0 +1,6 @@
+CVE,Vulnerable Package Name,Vulnerable Package Version
+20XX-XX-XX,lodash,4.17.21
+20XX-XX-XX,vue,3.4.21
+20XX-XX-XX,babel-core,6.26.3
+20XX-XX-XX,apollo-server,3.13.0
+20XX-XX-XX,express,4.19.2
