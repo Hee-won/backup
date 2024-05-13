@@ -8,40 +8,31 @@ import sys
 import pygraphviz as pgv
 import csv
 
-#아직 안돌아감 ㅠㅠ
 
-def collect_dfs(tree_name, tree_version, g, extracted_graph):
+def collect_dfs(tree_str, g, extracted_graph, visited):
 	"""
     - Description: 입력으로 주어진 패키지와 버전에 대한 reverse dependency를 dfs 방식으로 탐방
     - Input: 어떤 트리를 뽑을 것인지 패키지 이름과 버전. dfs가 반복되며 downstream pkg name = tree_name
     - Output: 업데이트된 그래프
     """
     # tree_name에 해당하는 서브그래프 찾기
+	tree_name, tree_version = tree_str.rsplit('@',1)
 	downstream_subgraph = g.get_subgraph(tree_name)
-	for node in downstream_subgraph.nodes():
-    # tree_name라는 이름의 downstream_subgraph에 내가 찾고자하는 버전이 있는지 찾기
-		if node == tree_version:
-			# if 에러 핸들링: 찾는 노드(버전)은 있는데 다운스트림과의 관계 외에 엣지로 연결된 게 있다면??????? <- 어쨌든 한개의 엣지는 있음!! 두개부터 없는겨
-			# 'tree_version'라는 노드에서 나가는 엣지의 개수를 구합니다.
-			if downstream_subgraph.out_degree('tree_version') >= 2:
-				# 엣지의 라벨 정보 = 패키지 이름을 가져옵니다.
-				upstream_name = subgraph.get_edge(edge[0],edge[1]).attr['label']
-				upstream_subgraph = g.get_subgraph('upstream_name')
-	    		# 엣지에 연결된 다른 노드 = 패키지 버전를 가져옵니다.
-				upstream_version = edge[1] if edge[0] == node_name else edge[0]
-				downstream = f"{tree_name}@({tree_version})"
-				upstream = f"{upstream_name}@({upstream_version})"
-	            #tree용 그래프에 엣지 연결
-				extracted_graph.add_edge(downstream, upstream)
-	    		
-	            # if 사이클 방지: 이미 extracted_graph에 있던 upstream 이라면 다음 걸로 넘어가기
-				for extracted_subgraph in extracted_graph:
-					if extracted_subgraph.name == 'upstream_name' and extracted_subgraph.has_node('upstream_version'):
-						print(f"Subgraph {upstream_name} contains node {upstream_version}, so SKIPPPPPPPPPP")
-						break 
-					else: #extracted_graph에 없던 노드이고 다음 노드에 또 노드가 있다면 dfs로 탐방
-						collect_dfs(upstream_name, upstream_version, g, extracted_graph)
 
+	for edge in g.in_edges():
+		# g에 있는 모든 
+		upstream, downstream = edge
+        # 엣지 정보 출력 또는 처리
+		if downstream == tree_str:
+		
+			extracted_graph.add_edge(downstream, upstream)
+			
+			if not upstream in visited:
+				visited.append(upstream)
+				collect_dfs(upstream, g, extracted_graph, visited)
+				
+
+	return extracted_graph
 
 
 def get_reverse_dependency_tree(tree_name, tree_version, g):
@@ -49,14 +40,18 @@ def get_reverse_dependency_tree(tree_name, tree_version, g):
     - Description: 입력으로 주어진 패키지와 버전에 대한 디펜던시 그래프 생성
     - Input: 어떤 트리를 뽑을 것인지 패키지 이름과 버전
     - Output: 패키지 이름과 버전에 맞는 트리 
-
     """
+	tree_str = f"{tree_name}@{tree_version}" #노드 이름이자 엣지구분방
+	print(f"[+] TREE_NAME : {tree_name}")
+	print(f"[+] TREE_VERSION : {tree_version}")
+	print(f"[+] 리버스디펜던시 추출 : <<<{tree_name}@{tree_version}>>> 대상")
 	extracted_graph = pgv.AGraph(directed=True)  # 새로운 그래프 생성
+	visited = []
+	visited.append(tree_str)
+	extracted_graph = collect_dfs(tree_str, g, extracted_graph, visited)
 
-	collect_dfs(tree_name, tree_version, g, extracted_graph)
 
-
-
+	print(extracted_graph)
 	return extracted_graph
 
 
