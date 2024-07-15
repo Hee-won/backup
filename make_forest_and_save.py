@@ -9,43 +9,117 @@ import pygraphviz as pgv
 import csv
 from picking_tree import get_reverse_dependency_tree
 
-def get_onewalk_dep(g, pkg_name, pkg_version, working): 
+def read_dependencies(pkg_name, pkg_version):
+    """
+    - Description: 저장된 dependencies 폴더의 JSON 파일에서 의존성 정보 읽기
+    - Input: 의존성을 알고싶은 패키지 이름과 버전
+    - Output: 의존성 정보
+    """
+
+    filename = f"{pkg_name.replace('/', '%')}@{pkg_version}_dependencies.json"
+    try:
+        with open(os.path.join('dependencies', filename), 'r') as file:
+            return json.load(file)
+    except FileNotFoundError:
+        print(f"Dependencies file not found for {pkg_name}@{pkg_version}")
+        return {}
+    except json.JSONDecodeError as e:
+        print(f"JSON decode error: {e}")
+        return {}
+
+def read_versionList(pkg_name, pkg_version):
+    """
+    - Description: 저장된 versions 폴더의 JSON 파일에서 버전 정보 읽기 for semver
+    - Input: 어떤 버전이 있는지 알고싶은 패키지 이름과 버전
+    - Output: 버전 정보
+    """
+
+    """ 저장된 JSON 파일에서 버전 정보 읽기 """
+    filename = f"{pkg_name.replace('/', '%')}@{pkg_version}_versionList.json"
+    try:
+        with open(os.path.join('versions', filename), 'r') as file:
+            return json.load(file)
+    except FileNotFoundError:
+        print(f"Dependencies file not found for {pkg_name}@{pkg_version}")
+        return {}
+    except json.JSONDecodeError as e:
+        print(f"JSON decode error: {e}")
+        return {}
+
+def get_latest_version(version_range, all_versions):
+    """
+    - Description: 주어진 패키지의 종속 패키지들을 semantic versioning화
+    - Input: package.json에 있는 버전정보, npm에 올라온 모든 버전 metadata 정보
+    - Output: 
+    """
+    try:
+        # Node.js 스크립트에서 semver.maxSatisfying을 사용하여 최신 버전을 찾음
+        # Destfying 논문처럼 바꿔줘야함
+        node_script = f"""
+        const semver = require('semver');
+        const versions = {json.dumps(all_versions)};
+        const range = '{version_range}';
+        console.log(semver.maxSatisfying(versions, range));
+        """
+        result = subprocess.run(['node', '-e', node_script], capture_output=True, text=True, check=True)
+        latest_version = result.stdout.strip()
+        print(f"[+] latest_version: {latest_version}")
+        return latest_version
+    except subprocess.CalledProcessError as e:
+        print(f"Error occurred: {e}")
+        return None
+
+def get_onewalk_dep(g, pkg_name, pkg_version, working):
     """
     - Description: 주어진 패키지의 종속 패키지들을 확인 + 정규화
     - Input: 지금까지 만든 graph, 검사하고 싶은 패키지 이름, 버전
     - Output: 'name: version (json)' 형식으로 만들어진 dictionary 
     """
 
-    #print(f"+++++ get_onewalk_dep for {pkg_name}")
+    print(f"+++++ get_onewalk_dep for {pkg_name}")
     dep_dict = {}
     try:
-        dep_result = subprocess.run(['npm', 'view', pkg_name, 'dependencies', '--json'], capture_output=True, text=True, check=True)
-        #view 한 의존성 저장
-        dep_dict = json.loads(dep_result.stdout)
+        dep_result = read_dependencies(pkg_name, pkg_version)
+        print(f"+++++ dep_result: {dep_result}")
+        # view 한 의존성 저장
+        dep_dict = dep_result
 
     except subprocess.CalledProcessError as e:
-        #print(f"Error occurred while fetching dependencies for {pkg_name}: {e}")
+        print(f"Error occurred while fetching dependencies for {pkg_name}: {e}")
         return g, working, dep_dict
 
     except json.JSONDecodeError as e:
-        #print(f"JSON decode error: {e}")
+        # 다음 디펜던시가 없어서 발생
+        print(f"JSON decode error: {e}")
         return g, working, dep_dict
 
-    #결과값 없으면 탈출
+    # 결과값 없으면 탈출
     if not isinstance(dep_dict, dict):
         #print(f"[-] get_onewalk_dep(): No dependencies for {pkg_name}.")
-        return False
-    for name, version in dep_dict.items():
-        # 특수 문자를 제거하고 숫자만 추출
-        version_numbers = re.findall(r'\d+', version)
-        #버전 정보가 있을 경우, n.n.n 저장
-        if version_numbers:
-            version_str = ".".join(version_numbers)
-            dep_dict[name] = version_str
-        else:
-            # 버전 정보가 없을 경우, 0.0.0으로 지정
+        return g, working, dep_dict
+
+    for name, version_range in dep_dict.items():
+        try:
+            # npm view 명령어를 사용하여 모든 버전을 가져오기
+            dep_result = subprocess.run(['npm', 'view', name, 'versions', '--json'], capture_output=True, text=True, check=True)
+            all_versions = json.loads(dep_result.stdout)
+
+            # 최신 버전 가져오기
+            latest_version = get_latest_version(version_range, all_versions)
+
+            if latest_version:
+                dep_dict[name] = latest_version
+            else:
+                dep_dict[name] = "0.0.0"
+        except subprocess.CalledProcessError as e:
+            print(f"Error occurred while fetching versions for {name}: {e}")
             dep_dict[name] = "0.0.0"
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error: {e}")
+            dep_dict[name] = "0.0.0"
+
     return g, working, dep_dict
+
         
 
 def make_subgraph(g, pkg_name, pkg_version, working, dep_dict):
@@ -53,8 +127,8 @@ def make_subgraph(g, pkg_name, pkg_version, working, dep_dict):
     - Description: pkg_name에 맞는 서브그래프를 그리고 working 리스트 업데이트
     - Input: 전체 그래프 g, upstream 패키지 이름, 버전, 
     - Output:
-    ~ upstream: 'pkg_name@pkg_version'
-    ~ downstream: 'name@version'
+    ** upstream 정보: 'pkg_name@pkg_version'
+    ** downstream 정보: 'name@version'
   
     """ 
 
@@ -77,9 +151,8 @@ def make_subgraph(g, pkg_name, pkg_version, working, dep_dict):
             else: # <-특정패키지 O, and 특정버전 O!!!
                 print(f"Subgraph node '{version} of {name}' already exists.")
                 # 얘는 특정 패키지의 특정 버전이 있는 경우임..! 엣지만 만든다면 여기서 사이클을 막을 수있음!! 얘만 암것두 안하고 다음 for문으로 넘어가는 방식으로 해결함
-
-        # 이 패키지 이름으로 만들어진 서브그래프가 없음        
         else:
+            #이 패키지 이름으로 만들어진 서브그래프가 없음 = 처음 나온 패키지라는 뜻!
             print(f"Subgraph {name} does not exist.")
 
             working.append(downstream_str)
@@ -155,22 +228,77 @@ def combine_graphs(graph1, graph2):
     return combined_graph
 
 
-def create_graph(): #그래프 만들기
+def create_graph(): 
+    """
+    - Description: 그래프 만들기
+    - Input: 
+    - Output: 초기화된 그래프 g
+    """
     G = pgv.AGraph(directed=True)
     return G
 
 # 그래프를 JSON 형식으로 직렬화하여 저장
-def save_graph_as_json(graph):
-    data = graph.string()  # 그래프를 문자열로 변환
-    with open("entire_forest.json", 'w') as f:
-        json.dump(data, f)  # JSON 파일로 저장
+def save_graph_as_json(G):
+    """
+    - Description: 그래프를 변환해서 json 형태로 저장
+    - Input: 모든 패키지 info가 추가된 그래프 g
+    - Output: json 파일 (return 값 없음)
+    """
+    # 
+    graph_dict = {
+        'nodes': list(G.nodes()),
+        'edges': list(G.edges())
+    }
 
+    with open("entire_forest.json", 'w') as f:
+        json.dump(graph_dict, f)  # JSON 파일로 저장
+
+
+def process_packages_from_csv(csv_path, g):
+    """
+    - Description: csv의 패키지이름과 패키지버전 정보를 읽어 transitive하게 그래프 g를 만듭니다.
+    - Input: 모든 패키지 info가 있는 csv, 초기화되어있는 그래프 g
+    - Output: 모든 패키지 info가 추가된 그래프 g
+    """
+    with open(csv_path, newline='') as csvfile:
+        reader = csv.reader(csvfile)
+        next(reader)  # 첫번째 행 제외 (헤더라인)
+        for row in reader:
+            package_name = row[0]  # 첫 번째 열의 값은 the package name
+            package_versions = row[1:]  # All subsequent columns are versions
+            
+            # Process each version of the package
+            for version in package_versions:
+                package_str = f"{package_name}@{version}"
+                print(f"Processing {package_str}")
+
+                package_subgraph = g.subgraph(name = package_name)
+                package_subgraph.graph_attr['label'] = package_name
+                package_subgraph.add_node(package_str)
+
+                # Prepare to check dependencies and process them 전의적의존성 체크
+                working = []
+                working.append(package_str)
+                this_graph = process_package(g, working)
+                g = combine_graphs(this_graph, g)
+
+        # After processing all rows, save the graph structure
+        save_graph_as_json(g)
+
+        # Additional processing or output
+        for sg in g.subgraphs():
+            print(sg)
+            print("Subgraph name:", sg.name)
+
+    return g
 
 
 if __name__ == "__main__":
+
     # 사용자 입력을 받아서 뽑을 tree 정함
     if len(sys.argv) != 3:
-        print("Usage: python3 script_name.py tree_package_name tree_package_version")
+        print("[ERROR] Usage: python3 script_name.py tree_package_name tree_package_version")
+    
     else:
         tree_name = sys.argv[1]  # 첫 번째 인자는 패키지 이름
         tree_version = sys.argv[2]  # 두 번째 인자는 패키지 버전
@@ -179,39 +307,25 @@ if __name__ == "__main__":
 
     # Select a target package
     g = create_graph()
-    #포레스트를 구성할 패키지 정보가 담긴 csv 
-    with open('VDB_npm.csv', newline='') as csvfile:
-        reader = csv.reader(csvfile)
-        next(reader)  # 첫 번째 행은 제외 (헤더라인)
-        for row in reader:
-            package_name = row[1]  # 두 번째 열의 값
-            package_version = row[2]  # 세 번째 열의 값
-            package_str = f"{package_name}@{package_version}"
 
-            # Initialize graph for the target
-            print("STEP 2")
-            package_subgraph = g.subgraph(name = package_name)
-            package_subgraph.graph_attr['label'] = package_name
-            package_subgraph.add_node(package_str)
+    #포레스트를 구성할 패키지 정보가 담긴 csv
+    csv_path = 'info_packages_mini.csv'
+    g = process_packages_from_csv(csv_path,g)
 
-            # transitive check
-            print("STEP 3")
-            working = []
-            working.append(package_str)
-            this_graph = process_package(g, working)
-
-            g = combine_graphs(this_graph, g)
-            for sg in g.subgraphs():
-                print(sg)
-                print("Subgraph name:", sg.name)
-            
-    save_graph_as_json(g)
 
     g.layout(prog="dot")  # use dot
     g.draw("popular_forest.png")
 
-    # # tree 뽑는 과정 ing.. 
+    # tree 뽑는 과정 ing..
+    print("tree 뽑는 과정 ing..")
     reverse_dependency_tree = get_reverse_dependency_tree(tree_name, tree_version, g)
 
     reverse_dependency_tree.layout(prog="dot")
     reverse_dependency_tree.draw("reverse_dependency_tree.png")
+
+
+    """
+    - Description: 
+    - Input: 
+    - Output: 
+    """
