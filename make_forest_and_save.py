@@ -9,13 +9,14 @@ import pygraphviz as pgv
 import csv
 from picking_tree import get_reverse_dependency_tree
 
+
 def read_dependencies(pkg_name, pkg_version):
     """
     - Description: 저장된 dependencies 폴더의 JSON 파일에서 의존성 정보 읽기
     - Input: 의존성을 알고싶은 패키지 이름과 버전
     - Output: 의존성 정보
     """
-
+    #file_path 정의
     filename = f"{pkg_name.replace('/', '%')}@{pkg_version}_dependencies.json"
     try:
         with open(os.path.join('dependencies', filename), 'r') as file:
@@ -227,7 +228,6 @@ def combine_graphs(graph1, graph2):
             new_subgraph.add_edge(*edge, **subgraph.get_edge(*edge).attr)
     return combined_graph
 
-
 def create_graph(): 
     """
     - Description: 그래프 만들기
@@ -236,6 +236,7 @@ def create_graph():
     """
     G = pgv.AGraph(directed=True)
     return G
+
 
 # 그래프를 JSON 형식으로 직렬화하여 저장
 def save_graph_as_json(G):
@@ -253,22 +254,25 @@ def save_graph_as_json(G):
     with open("entire_forest.json", 'w') as f:
         json.dump(graph_dict, f)  # JSON 파일로 저장
 
-
-def process_packages_from_csv(csv_path, g):
+def process_packages_from_csv(lines_to_process, g):
     """
     - Description: csv의 패키지이름과 패키지버전 정보를 읽어 transitive하게 그래프 g를 만듭니다.
     - Input: 모든 패키지 info가 있는 csv, 초기화되어있는 그래프 g
     - Output: 모든 패키지 info가 추가된 그래프 g
     """
-    with open(csv_path, newline='') as csvfile:
-        reader = csv.reader(csvfile)
-        next(reader)  # 첫번째 행 제외 (헤더라인)
-        for row in reader:
-            package_name = row[0]  # 첫 번째 열의 값은 the package name
-            package_versions = row[1:]  # All subsequent columns are versions
-            
-            # Process each version of the package
-            for version in package_versions:
+
+    for row in lines_to_process:
+        package_name = row[0]  # 첫 번째 열의 값은 the package name
+        package_versions = row[1:]  # All subsequent columns are versions
+        #print(f"[[[process_packages_from_csv]]] package_name : {package_name}")
+        #print(f"[[[process_packages_from_csv]]] package_versions : {package_versions}")
+
+        # 각 버전에 대해 개별 노드를 생성
+        for version_group in package_versions:
+            versions = version_group.split(',')  # 쉼표로 구분된 버전들을 개별적으로 분리
+            for version in versions:
+                #print(f"[[[process_packages_from_csv]]] version : {version}")
+                version = version.strip()
                 package_str = f"{package_name}@{version}"
                 print(f"Processing {package_str}")
 
@@ -282,22 +286,61 @@ def process_packages_from_csv(csv_path, g):
                 this_graph = process_package(g, working)
                 g = combine_graphs(this_graph, g)
 
-        # After processing all rows, save the graph structure
-        save_graph_as_json(g)
+    # After processing all rows, save the graph structure
+    save_graph_as_json(g)
 
-        # Additional processing or output
-        for sg in g.subgraphs():
-            print(sg)
-            print("Subgraph name:", sg.name)
+    # Additional processing or output
+    for sg in g.subgraphs():
+        print(sg)
+        print("Subgraph name:", sg.name)
 
     return g
+
+
+def seperate_csv(csv_path, csv_line, g): 
+    """
+    - Description: input으로 csv 파일과 라인 번호를 받아 라인 10씩 쪼갠 값을 리턴
+    - Input: csv 파일 주소, line 수
+    - Output: 
+    """
+    try:
+        with open(csv_path, mode='r', encoding='utf-8', newline='') as file:
+            reader = csv.reader(file)
+            for _ in range(csv_line - 1):  # 시작 라인까지 스킵
+                next(reader)
+
+            lines_to_process = []
+
+            for line_number, row in enumerate(reader, start=csv_line):
+                lines_to_process.append(row)
+
+                if len(lines_to_process) == 10:
+                    # 10줄을 다 모으면 process_packages_from_csv 함수 호출
+                    #print(f"[+++++++++++++++] lines_to_process = {lines_to_process}")
+                    g = process_packages_from_csv(lines_to_process, g)
+                    #print(f"[+++++++++++++++] ggggggggggggggggggggggggggggggggggggggg = {g}")
+                    lines_to_process = []
+                    current_line = line_number + 1  # 현재 라인 번호를 업데이트
+
+            # 남은 줄이 있다면 마지막으로 처리
+            if lines_to_process:
+                #print(f"[+++++++++++++++] last lines_to_process = {lines_to_process}")
+                g = process_packages_from_csv(lines_to_process,g)
+                #print(f"Middle ggggggggggggggggggggggggggggggggggggggg : {g}")
+        return g
+    except FileNotFoundError:
+        print(f"Error: File '{csv_path}' not found.")
+    except csv.Error as e:
+        print(f"Error processing CSV file at line {csv_line}: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
 
 
 if __name__ == "__main__":
 
     # 사용자 입력을 받아서 뽑을 tree 정함
     if len(sys.argv) != 3:
-        print("[ERROR] Usage: python3 script_name.py tree_package_name tree_package_version")
+        print("[ERROR] Usage: python3 script_name.py tree_package_name tree_package_version\n This code returns the downstream graph that depends on 'tree_package_name'@'tree_package_version'")
     
     else:
         tree_name = sys.argv[1]  # 첫 번째 인자는 패키지 이름
@@ -305,23 +348,26 @@ if __name__ == "__main__":
         print(f"[+] TREE_NAME : {tree_name}")
         print(f"[+] TREE_VERSION : {tree_version}")
 
+
     # Select a target package
     g = create_graph()
 
     #포레스트를 구성할 패키지 정보가 담긴 csv
-    csv_path = 'info_packages_mini.csv'
-    g = process_packages_from_csv(csv_path,g)
-
+    csv_path = 'info_packages.csv'
+    g = seperate_csv(csv_path, 2, g)
+    
+    print(f"Last ggggggggggggggggggggggggggggggggggggggg : {g}")
 
     g.layout(prog="dot")  # use dot
-    g.draw("popular_forest.png")
+    #g.draw("popular_forest.png")
 
-    # tree 뽑는 과정 ing..
+    #tree 뽑는 과정 ing..
     print("tree 뽑는 과정 ing..")
     reverse_dependency_tree = get_reverse_dependency_tree(tree_name, tree_version, g)
 
-    reverse_dependency_tree.layout(prog="dot")
-    reverse_dependency_tree.draw("reverse_dependency_tree.png")
+    if reverse_dependency_tree is not None:
+        reverse_dependency_tree.layout(prog="dot")
+        reverse_dependency_tree.draw("reverse_dependency_tree.png")
 
 
     """
