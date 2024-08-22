@@ -7,8 +7,40 @@ import re
 import sys
 import pygraphviz as pgv
 import csv
+import datetime
 from picking_tree import get_reverse_dependency_tree
 
+
+def load_partial_forests(directory, g):
+    """
+    - Description: 주어진 디렉토리에서 'partial_forest'가 포함된 모든 JSON 파일을 찾아 읽고,
+                   그 내용을 전체 그래프 g에 통합합니다.
+    - Input: directory - JSON 파일이 저장된 디렉토리 경로, g - 전체 그래프 객체
+    - Output: 통합된 전체 그래프 g
+    """
+    for filename in os.listdir(partial_forest_directory):
+        if 'partial_forest' in filename and filename.endswith('.json'):
+            print("Find partial forest")
+            file_path = os.path.join(directory, filename)
+            print(f"Loading {file_path}")
+            
+            # JSON 파일 읽기
+            with open(file_path, 'r') as file:
+                partial_forest = json.load(file)
+            
+            # 노드 추가
+            for node in partial_forest.get("nodes", []):
+                if not g.has_node(node):
+                    g.add_node(node)
+            
+            # 엣지 추가
+            for edge in partial_forest.get("edges", []):
+                source, target = edge
+                if not g.has_edge(source, target):
+                    g.add_edge(source, target)
+    if g is None:
+        raise ValueError("Function 'load_partial_forests' returned None")
+    return g
 
 def read_dependencies(pkg_name, pkg_version):
     """
@@ -16,13 +48,21 @@ def read_dependencies(pkg_name, pkg_version):
     - Input: 의존성을 알고싶은 패키지 이름과 버전
     - Output: 의존성 정보
     """
-    #file_path 정의
+    # 첫 번째 폴더(dependencies)에서 파일을 찾기
     filename = f"{pkg_name.replace('/', '%')}@{pkg_version}_dependencies.json"
+    file_path = os.path.join('dependencies', filename)
+    
+    # 파일이 없으면 두 번째 폴더(versions_new)에서 검색
+    if not os.path.exists(file_path):
+        print(f"Dependencies file not found in dependencies folder for {pkg_name}@{pkg_version}. \nSearching in versions_new folder...")
+        file_path = os.path.join('versions_new', filename)
+    
+    # 최종적으로 파일이 존재하는지 확인하고 읽기
     try:
-        with open(os.path.join('dependencies', filename), 'r') as file:
+        with open(file_path, 'r') as file:
             return json.load(file)
     except FileNotFoundError:
-        print(f"Dependencies file not found for {pkg_name}@{pkg_version}")
+        print(f"Dependencies file not found in both folders for {pkg_name}@{pkg_version}")
         return {}
     except json.JSONDecodeError as e:
         print(f"JSON decode error: {e}")
@@ -273,6 +313,9 @@ def process_packages_from_csv(lines_to_process, g):
             for version in versions:
                 #print(f"[[[process_packages_from_csv]]] version : {version}")
                 version = version.strip()
+                # 현재 시간 가져오기
+                current_time = datetime.datetime.now()
+                print(f"\n\n현재 시간:", current_time)
                 package_str = f"{package_name}@{version}"
                 print(f"Processing {package_str}")
 
@@ -338,6 +381,9 @@ def seperate_csv(csv_path, csv_line, g):
 
 if __name__ == "__main__":
 
+    # partial_forest.json 파일들이 있는 디렉토리 경로 설정
+    partial_forest_directory = './'
+
     # 사용자 입력을 받아서 뽑을 tree 정함
     if len(sys.argv) != 3:
         print("[ERROR] Usage: python3 script_name.py tree_package_name tree_package_version\n This code returns the downstream graph that depends on 'tree_package_name'@'tree_package_version'")
@@ -348,18 +394,25 @@ if __name__ == "__main__":
         print(f"[+] TREE_NAME : {tree_name}")
         print(f"[+] TREE_VERSION : {tree_version}")
 
-
-    # Select a target package
     g = create_graph()
 
+    # partial_forest들을 전체 그래프 g에 통합
+    g = load_partial_forests(partial_forest_directory, g)
+
     #포레스트를 구성할 패키지 정보가 담긴 csv
-    csv_path = 'info_packages.csv'
+    csv_path = './info_packages/info_packages8.csv'
     g = seperate_csv(csv_path, 2, g)
-    
+    if g is None:
+        raise ValueError("'load_partial_forests' returned None")
+
     print(f"Last ggggggggggggggggggggggggggggggggggggggg : {g}")
 
-    g.layout(prog="dot")  # use dot
-    #g.draw("popular_forest.png")
+    # 최종적으로 그래프를 레이아웃하고 저장
+    if g is not None:
+        g.layout(prog="dot")  # use dot
+        g.draw("popular_forest.pdf")  # Save as PDF format
+    else:
+        print("Error: Graph 'g' is None")
 
     #tree 뽑는 과정 ing..
     print("tree 뽑는 과정 ing..")
@@ -367,7 +420,8 @@ if __name__ == "__main__":
 
     if reverse_dependency_tree is not None:
         reverse_dependency_tree.layout(prog="dot")
-        reverse_dependency_tree.draw("reverse_dependency_tree.png")
+        reverse_dependency_tree.draw("reverse_dependency_tree.pdf")
+        print("SUCCESS :D")
 
 
     """
